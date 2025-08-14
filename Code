@@ -14,6 +14,7 @@ from tkinter import filedialog, messagebox
 import discord
 from discord.ext import tasks
 
+# Basisordner bestimmen (funktioniert für .py und PyInstaller-EXE)
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
 else:
@@ -35,22 +36,36 @@ DEFAULT_CONFIG = {
     "last_post_date": ""         # vom Bot gesetzt
 }
 
-
 def load_config() -> dict:
-    if CONFIG_PATH.exists():
-        try:
+    """Liest config.json neben dem Script/der EXE und ergänzt fehlende Defaults."""
+    try:
+        if CONFIG_PATH.exists():
             data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-            for k, v in DEFAULT_CONFIG.items():
-                data.setdefault(k, v)
-            return data
-        except Exception:
-            traceback.print_exc()
-            messagebox.showerror("Config-Fehler", "config.json beschädigt. Es wird eine neue erstellt.")
-    CONFIG_PATH.write_text(json.dumps(DEFAULT_CONFIG, indent=2, ensure_ascii=False), encoding="utf-8")
-    return DEFAULT_CONFIG.copy()
+        else:
+            data = {}
+        # fehlende Keys ergänzen
+        for k, v in DEFAULT_CONFIG.items():
+            data.setdefault(k, v)
+        return data
+    except Exception:
+        # Bei defekter Datei neue anlegen
+        CONFIG_PATH.write_text(
+            json.dumps(DEFAULT_CONFIG, indent=2, ensure_ascii=False),
+            encoding="utf-8"
+        )
+        return DEFAULT_CONFIG.copy()
 
 def save_config(cfg: dict):
-    CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+    """Speichert config.json garantiert neben dem Script/der EXE."""
+    try:
+        CONFIG_PATH.write_text(
+            json.dumps(cfg, indent=2, ensure_ascii=False),
+            encoding="utf-8"
+        )
+        print(f"Konfiguration gespeichert: {CONFIG_PATH}")
+    except Exception as e:
+        print(f"Fehler beim Speichern: {e}")
+
 
 class CountdownBotRunner:
     """Discord-Client im Thread; Daily-Task + Test-Post + Debug."""
