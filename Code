@@ -1,0 +1,477 @@
+import asyncio
+import json
+import threading
+import traceback
+import sys
+import os
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Optional
+
+import tkinter as tk
+from tkinter import filedialog, messagebox
+
+import discord
+from discord.ext import tasks
+
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+os.chdir(BASE_DIR)
+
+APP_DIR = Path(BASE_DIR)
+CONFIG_PATH = APP_DIR / "config.json"
+
+DEFAULT_CONFIG = {
+    "token": "",
+    "channel_id": "",
+    "event_name": "LAN-Party",
+    "event_date": "2026-07-24",  # YYYY-MM-DD
+    "post_hour": "9:00",         # HH:MM -> z.B. "4:20"
+    "mention_everyone": False,   # @everyone zuschalten
+    "image_path": "",            # optional
+    "last_post_date": ""         # vom Bot gesetzt
+}
+
+
+def load_config() -> dict:
+    if CONFIG_PATH.exists():
+        try:
+            data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            for k, v in DEFAULT_CONFIG.items():
+                data.setdefault(k, v)
+            return data
+        except Exception:
+            traceback.print_exc()
+            messagebox.showerror("Config-Fehler", "config.json beschädigt. Es wird eine neue erstellt.")
+    CONFIG_PATH.write_text(json.dumps(DEFAULT_CONFIG, indent=2, ensure_ascii=False), encoding="utf-8")
+    return DEFAULT_CONFIG.copy()
+
+def save_config(cfg: dict):
+    CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+
+class CountdownBotRunner:
+    """Discord-Client im Thread; Daily-Task + Test-Post + Debug."""
+    def __init__(self):
+        self.thread = None            # type: Optional[threading.Thread]
+        self.stop_event = threading.Event()
+        self.client = None            # type: Optional[discord.Client]
+        self.loop = None              # type: Optional[asyncio.AbstractEventLoop]
+
+    def start(self, cfg: dict, on_log):
+        if self.thread and self.thread.is_alive():
+            on_log("Bot läuft bereits.")
+            return
+
+        self.stop_event.clear()
+
+        def _thread_target():
+            try:
+                self.loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self.loop)
+                self.loop.run_until_complete(self._main_async(cfg, on_log))
+            except Exception as e:
+                on_log(f"Bot-Thread Fehler: {e}\n{traceback.format_exc()}")
+            finally:
+                try:
+                    if self.loop and not self.loop.is_closed():
+                        self.loop.stop()
+                        self.loop.close()
+                except Exception:
+                    pass
+                self.loop = None
+                on_log("Bot-Thread beendet.")
+
+        self.thread = threading.Thread(target=_thread_target, daemon=True)
+        self.thread.start()
+        on_log("Bot-Thread gestartet.")
+
+    def stop(self, on_log):
+        self.stop_event.set()
+        if self.client and self.loop and self.client.is_ready():
+            async def _close():
+                try:
+                    await self.client.close()
+                except Exception:
+                    pass
+            asyncio.run_coroutine_threadsafe(_close(), self.loop)
+        on_log("Stop angefordert.")
+
+    def test_post_now(self, on_log):
+        """Sofort-Test (ignoriert last_post_date)."""
+        if not (self.client and self.loop and self.client.is_ready()):
+            on_log("Bot ist nicht gestartet oder noch nicht bereit.")
+            return
+        cfg = load_config()
+
+        async def _send_once():
+            # Validierung
+            try:
+                channel_id = int(str(cfg.get("channel_id", "")).strip())
+            except ValueError:
+                on_log("Channel ID ungültig.")
+                return
+            try:
+                event_date = datetime.strptime(cfg.get("event_date", ""), "%Y-%m-%d").date()
+            except Exception:
+                on_log("Event-Date ungültig (YYYY-MM-DD).")
+                return
+
+            name = (cfg.get("event_name") or "Event").strip() or "Event"
+            d = (event_date - datetime.now().date()).days
+            if d > 1:
+                content = f"**{name}** in **{d} Tagen**! 🔥🚀"
+            elif d == 1:
+                content = f"**{name}** ist **morgen**! 😱🎉"
+            elif d == 0:
+                content = f"🎉🔥 Heute startet **{name}**!!! 🔥🎉"
+            else:
+                content = f"{name} ist vorbei. 😅"
+
+            if cfg.get("mention_everyone"):
+                content = "@everyone " + content
+
+            image_path = (cfg.get("image_path") or "").strip()
+            img_file = Path(image_path) if image_path else None
+            if img_file and not img_file.exists():
+                on_log("Bildpfad nicht gefunden – es wird ohne Bild gepostet.")
+                img_file = None
+
+            ch = self.client.get_channel(channel_id)
+            if ch is None:
+                on_log("Channel nicht gefunden (Bot-Rechte/ID prüfen).")
+                return
+
+            try:
+                if img_file:
+                    await ch.send(content=content, file=discord.File(str(img_file)))
+                else:
+                    await ch.send(content)
+                on_log("Test-Nachricht gesendet.")
+            except Exception as e:
+                on_log(f"Fehler beim Senden: {e}")
+
+        asyncio.run_coroutine_threadsafe(_send_once(), self.loop)
+
+    async def _main_async(self, cfg: dict, on_log):
+        # Grund-Validierung
+        token = (cfg.get("token") or "").strip()
+        if not token:
+            on_log("Token fehlt. In der GUI setzen & speichern.")
+            return
+        try:
+            channel_id = int(str(cfg.get("channel_id", "")).strip())
+        except ValueError:
+            on_log("Channel ID muss Zahl sein.")
+            return
+        try:
+            event_date = datetime.strptime(cfg.get("event_date", ""), "%Y-%m-%d").date()
+        except Exception:
+            on_log("Event-Date ungültig (YYYY-MM-DD).")
+            return
+        # HH:MM parsen
+        try:
+            ph_str = str(cfg.get("post_hour", "9:00")).strip()
+            ph, pm = map(int, ph_str.split(":"))
+            if not (0 <= ph <= 23 and 0 <= pm <= 59):
+                raise ValueError()
+        except Exception:
+            on_log("Post Hour muss im Format HH:MM sein (z.B. 4:20).")
+            return
+
+        image_path = (cfg.get("image_path") or "").strip()
+        img_file = Path(image_path) if image_path else None
+        if img_file and not img_file.exists():
+            on_log("Bildpfad nicht gefunden – es wird ohne Bild gepostet.")
+            img_file = None
+
+        intents = discord.Intents.default()
+        allowed = discord.AllowedMentions(everyone=True)  # @everyone erlauben (wenn Rechte vorhanden)
+        client = discord.Client(intents=intents, allowed_mentions=allowed)
+        self.client = client
+
+        def today_str():
+            return datetime.now().strftime("%Y-%m-%d")
+
+        def days_left():
+            return (event_date - datetime.now().date()).days
+
+        def hype_message(name: str, d: int) -> str:
+            if d > 1:
+                return f"**{name}** in **{d} Tagen**! 🔥🚀"
+            elif d == 1:
+                return f"**{name}** ist **morgen**! 😱🎉"
+            elif d == 0:
+                return f"🎉🔥 Heute startet **{name}**!!! 🔥🎉"
+            else:
+                return ""  # nach dem Event nichts mehr
+
+        def next_run_at(hour: int, minute: int) -> datetime:
+            now = datetime.now()
+            t = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if t <= now:
+                t += timedelta(days=1)
+            return t
+
+        async def dump_channels_and_check():
+            """Debug: sichtbare Textkanäle listen + Channel-ID prüfen."""
+            try:
+                on_log("— Sichtbare Textkanäle (Guild / #channel / ID):")
+                for g in client.guilds:
+                    for ch in g.text_channels:
+                        on_log(f"{g.name} / #{ch.name} / {ch.id}")
+                if not client.guilds:
+                    on_log("Keine Guilds im Cache. Ist der Bot auf dem richtigen Server?")
+            except Exception as e:
+                on_log(f"Fehler beim Auflisten: {e}")
+
+            ch_cache = client.get_channel(channel_id)
+            on_log(f"get_channel({channel_id}) -> {'OK' if ch_cache else 'None'}")
+
+            try:
+                ch_api = await client.fetch_channel(channel_id)
+                on_log(f"fetch_channel({channel_id}) -> OK: #{getattr(ch_api, 'name', '?')}")
+            except discord.Forbidden:
+                on_log("fetch_channel -> Forbidden: Bot hat keine Rechte im Kanal.")
+            except discord.NotFound:
+                on_log("fetch_channel -> NotFound: Channel-ID existiert nicht auf Bots Server.")
+            except Exception as e:
+                on_log(f"fetch_channel -> Fehler: {e}")
+
+        @tasks.loop(seconds=30)
+        async def daily_task():
+            if self.stop_event.is_set():
+                try:
+                    await client.close()
+                except Exception:
+                    pass
+                return
+
+            now = datetime.now()
+
+
+            cfg_live = load_config()
+            try:
+                post_hour_str = str(cfg_live.get("post_hour", "9:00")).strip()
+                tph, tpm = map(int, post_hour_str.split(":"))
+            except Exception:
+                tph, tpm = ph, pm
+
+            if now.hour != tph or now.minute != tpm:
+                return
+
+            
+            if (cfg_live.get("last_post_date") or "").strip() == today_str():
+                return
+
+            ch = client.get_channel(channel_id)
+            if ch is None:
+                on_log("Channel nicht gefunden (Bot-Rechte/ID prüfen).")
+                return
+
+            name = (cfg_live.get("event_name") or "Event").strip() or "Event"
+            d = days_left()
+
+            
+            if d < 0:
+                cfg_live["last_post_date"] = today_str()
+                save_config(cfg_live)
+                on_log("Event ist vorbei – es wird nichts mehr gepostet.")
+                return
+
+            try:
+                if d == 0:
+                    # EVENT-TAG: 10x HYPE alle 30s
+                    on_log("Event-Tag! Starte 10x Hype-Posts im 30s-Takt…")
+                    for i in range(10):
+                        content = hype_message(name, d)
+                        if not content:
+                            break
+                        if cfg_live.get("mention_everyone"):
+                            content = "@everyone " + content
+                        if img_file:
+                            await ch.send(content=content, file=discord.File(str(img_file)))
+                        else:
+                            await ch.send(content)
+                        if i < 9:
+                            await asyncio.sleep(30)
+                    cfg_live["last_post_date"] = today_str()
+                    save_config(cfg_live)
+                    on_log("Event-Tag-Spam abgeschlossen.")
+                else:
+                    # Normale Tage
+                    content = hype_message(name, d)
+                    if not content:
+                        cfg_live["last_post_date"] = today_str()
+                        save_config(cfg_live)
+                        return
+                    if cfg_live.get("mention_everyone"):
+                        content = "@everyone " + content
+                    if img_file:
+                        await ch.send(content=content, file=discord.File(str(img_file)))
+                    else:
+                        await ch.send(content)
+                    cfg_live["last_post_date"] = today_str()
+                    save_config(cfg_live)
+                    on_log(f"Tages-Post gesendet um {now.strftime('%H:%M')}.")
+            except Exception as e:
+                on_log(f"Fehler beim Senden: {e}")
+
+        @daily_task.before_loop
+        async def before_daily():
+            await client.wait_until_ready()
+            cfg0 = load_config()
+            try:
+                hh, mm = map(int, str(cfg0.get("post_hour", "9:00")).split(":"))
+            except Exception:
+                hh, mm = 9, 0
+            target = next_run_at(hh, mm)
+            secs = max(0, (target - datetime.now()).total_seconds())
+            on_log(f"Daily-Task geplant für ~ {target.strftime('%Y-%m-%d %H:%M')}.")
+            await asyncio.sleep(secs)
+
+        @client.event
+        async def on_ready():
+            on_log(f"Eingeloggt als {client.user}.")
+            await dump_channels_and_check()
+            if not daily_task.is_running():
+                daily_task.start()
+
+        try:
+            await client.start(token)
+        except Exception as e:
+            on_log(f"Startfehler: {e}")
+
+class App:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Discord Countdown Bot (Mini GUI)")
+        self.root.geometry("640x520")
+        self.runner = CountdownBotRunner()
+        self.cfg = load_config()
+
+        pad = {"padx": 8, "pady": 6}
+        row = 0
+
+        tk.Label(root, text="Bot Token:").grid(row=row, column=0, sticky="e", **pad)
+        self.e_token = tk.Entry(root, width=56, show="•")
+        self.e_token.insert(0, self.cfg.get("token", ""))
+        self.e_token.grid(row=row, column=1, columnspan=2, sticky="we", **pad)
+
+        row += 1
+        tk.Label(root, text="Channel ID:").grid(row=row, column=0, sticky="e", **pad)
+        self.e_channel = tk.Entry(root, width=32)
+        self.e_channel.insert(0, str(self.cfg.get("channel_id", "")))
+        self.e_channel.grid(row=row, column=1, sticky="we", **pad)
+
+        row += 1
+        tk.Label(root, text="Event Name:").grid(row=row, column=0, sticky="e", **pad)
+        self.e_event = tk.Entry(root, width=32)
+        self.e_event.insert(0, self.cfg.get("event_name", ""))
+        self.e_event.grid(row=row, column=1, sticky="we", **pad)
+
+        row += 1
+        tk.Label(root, text="Event Date (YYYY-MM-DD):").grid(row=row, column=0, sticky="e", **pad)
+        self.e_date = tk.Entry(root, width=20)
+        self.e_date.insert(0, self.cfg.get("event_date", "2026-07-24"))
+        self.e_date.grid(row=row, column=1, sticky="w", **pad)
+
+        row += 1
+        tk.Label(root, text="Post Hour (HH:MM):").grid(row=row, column=0, sticky="e", **pad)
+        self.e_hour = tk.Entry(root, width=10)
+        self.e_hour.insert(0, str(self.cfg.get("post_hour", "9:00")))
+        self.e_hour.grid(row=row, column=1, sticky="w", **pad)
+
+        row += 1
+        # Checkbox @everyone
+        self.var_everyone = tk.BooleanVar(value=self.cfg.get("mention_everyone", False))
+        tk.Checkbutton(root, text="@everyone erwähnen", variable=self.var_everyone)\
+            .grid(row=row, column=1, sticky="w", **pad)
+
+        row += 1
+        tk.Label(root, text="Bild (optional):").grid(row=row, column=0, sticky="e", **pad)
+        self.e_img = tk.Entry(root, width=44)
+        self.e_img.insert(0, self.cfg.get("image_path", ""))
+        self.e_img.grid(row=row, column=1, sticky="we", **pad)
+        tk.Button(root, text="Durchsuchen…", command=self.browse_image).grid(row=row, column=2, **pad)
+
+        row += 1
+        tk.Button(root, text="Speichern", command=self.save).grid(row=row, column=0, **pad)
+        tk.Button(root, text="Start", command=self.start_bot).grid(row=row, column=1, **pad)
+        tk.Button(root, text="Stop", command=self.stop_bot).grid(row=row, column=2, **pad)
+
+        row += 1
+        tk.Button(root, text="Jetzt testen", command=self.test_now, width=20)\
+            .grid(row=row, column=1, **pad)
+
+        row += 1
+        tk.Label(root, text="Status / Log:").grid(row=row, column=0, sticky="w", **pad)
+        row += 1
+        self.t_log = tk.Text(root, height=12, width=80, state="disabled")
+        self.t_log.grid(row=row, column=0, columnspan=3, padx=8, pady=(0,8), sticky="nsew")
+
+        root.grid_columnconfigure(1, weight=1)
+        root.grid_rowconfigure(row, weight=1)
+
+        self.log("Bereit. Daten eintragen → Speichern → Start. 'Jetzt testen' sendet sofort.")
+
+    def log(self, msg: str):
+        self.t_log.config(state="normal")
+        self.t_log.insert("end", f"{datetime.now().strftime('%H:%M:%S')}  {msg}\n")
+        self.t_log.see("end")
+        self.t_log.config(state="disabled")
+
+    def browse_image(self):
+        path = filedialog.askopenfilename(
+            title="Bild auswählen",
+            filetypes=[("Bilder", "*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp"), ("Alle Dateien", "*.*")]
+        )
+        if path:
+            self.e_img.delete(0, "end")
+            self.e_img.insert(0, path)
+
+    def save(self):
+        try:
+            # HH:MM prüfen
+            hour_min = self.e_hour.get().strip()
+            try:
+                h, m = map(int, hour_min.split(":"))
+                if not (0 <= h <= 23 and 0 <= m <= 59):
+                    raise ValueError()
+            except Exception:
+                raise ValueError("Post Hour muss im Format HH:MM sein (z.B. 4:20).")
+
+            cfg = {
+                "token": self.e_token.get().strip(),
+                "channel_id": self.e_channel.get().strip(),
+                "event_name": self.e_event.get().strip(),
+                "event_date": self.e_date.get().strip(),
+                "post_hour": hour_min,
+                "mention_everyone": self.var_everyone.get(),
+                "image_path": self.e_img.get().strip(),
+                "last_post_date": self.cfg.get("last_post_date", "")
+            }
+            datetime.strptime(cfg["event_date"], "%Y-%m-%d")
+            save_config(cfg)
+            self.cfg = cfg
+            self.log("Konfiguration gespeichert.")
+        except Exception as e:
+            messagebox.showerror("Speicherfehler", str(e))
+
+    def start_bot(self):
+        self.save()
+        cfg = load_config()
+        self.runner.start(cfg, self.log)
+
+    def stop_bot(self):
+        self.runner.stop(self.log)
+
+    def test_now(self):
+        self.runner.test_post_now(self.log)
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = App(root)
+    root.mainloop()
