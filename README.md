@@ -1,44 +1,67 @@
-# Discord-Countdown-Bot
-A simple Discord bot that keeps counting down the days
-# Features
-Daily Countdown: Posts how many days are left until the event.
+# Discord Countdown Bot
 
-Event Day Hype: Sends 10 celebratory messages on the event day.
+Ein einfacher **Discord-Bot** mit Mini-GUI, der täglich die **verbleibenden Tage** bis zu einem Event postet.  
+Am Event-Tag schaltet er in den **Hype-Modus** und postet **10×** zur Feier des Tages (30 s Abstand).
 
-@everyone Option: Optional checkbox to ping all members.
+## Features
+- **Täglicher Countdown** in einen Textkanal
+- **Event-Day Hype**: 10 Posts am Event-Tag (30 s Abstand)
+- **Optionales `@everyone`** (per Checkbox, wenn der Bot die Berechtigung hat)
+- **Post-Zeit in HH:MM** (z. B. `04:20`)
+- **Bildanhang** optional (wird mit jeder Nachricht gesendet)
+- **GUI** (Tkinter) für Token, Channel-ID, Event-Name/Datum, Uhrzeit, @everyone, Bild
+- **Cross-Platform**: Raspberry Pi / Linux / Windows (PyInstaller-Builds)
 
-Custom Post Time: Set posting time down to the minute (HH:MM).
+## Anforderungen
+- Python **3.11+**
+- Tkinter (unter Debian/RPi: `python3-tk`)
+- Discord **Bot-Token** & **Channel-ID**
 
-Image Attachment: Optionally attach an image to the daily post.
+```
+requirements.txt
+discord.py==2.4.0
+```
 
-GUI Configuration: Easy setup for event name, date, channel ID, token, and more.
+## Konfiguration
+Die Datei **`config.json`** liegt **im selben Ordner** wie Script/Binary und wird von der GUI gelesen/geschrieben:
+```json
+{
+  "token": "YOUR_DISCORD_BOT_TOKEN",
+  "channel_id": "123456789012345678",
+  "event_name": "My Festival",
+  "event_date": "2025-08-14",
+  "post_hour": "9:00",
+  "mention_everyone": false,
+  "image_path": "path/to/image.png",
+  "last_post_date": ""
+}
+```
 
-Cross-Platform: Runs on Raspberry Pi, Linux, and Windows (supports PyInstaller builds).
-# Requirements
-Python 3.11+
+## Start (Raspberry Pi / Linux)
+```
+git clone https://github.com/michig97/Discord-Countdown-Bot.git
+cd Discord-Countdown-Bot
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python3 discordbot.py
+```
 
-discord.py 2.4.0
+## Native Binary bauen (Raspberry Pi)
 
-Tkinter (pre-installed with most Python distributions)
-
-A Discord Bot Token & Channel ID
-
-# Configuration
-The bot uses a config.json file in the same folder as the script/executable:
-"token": "YOUR_DISCORD_BOT_TOKEN",
-
-"channel_id": "123456789012345678",
-
-"event_name": "My Festival",
-
-"event_date": "2026-07-24",
-
-"post_hour": "9:00",
-
-"mention_everyone": false,
-
-"image_path": "path/to/image.png",
-
-"last_post_date": ""
-# Raspberry Pi Build
+```
+source .venv/bin/activate
+pip install pyinstaller
 pyinstaller --onefile --noconsole --name DiscordCountdown discordbot.py
+./dist/DiscordCountdown
+```
+
+## Optionaler Desktop-Shortcut:
+
+```
+[Desktop Entry]
+Type=Application
+Name=Discord Countdown Bot
+Exec=/full/path/to/dist/DiscordCountdown
+Terminal=false
+```
