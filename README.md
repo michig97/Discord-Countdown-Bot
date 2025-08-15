@@ -23,6 +23,13 @@ discord.py==2.4.0
 ```
 
 ## Konfiguration
+
+> **Tipp (RPi/Debian):**
+> ```bash
+> sudo apt update
+> sudo apt install -y python3-tk
+> ```
+
 Die Datei **`config.json`** liegt **im selben Ordner** wie Script/Binary und wird von der GUI gelesen/geschrieben:
 ```json
 {
@@ -41,8 +48,13 @@ Die Datei **`config.json`** liegt **im selben Ordner** wie Script/Binary und wir
 ```
 git clone https://github.com/michig97/Discord-Countdown-Bot.git
 cd Discord-Countdown-Bot
+
 python3 -m venv .venv
 source .venv/bin/activate
+
+# Falls die Datei im Repo fehlt, requirements.txt anlegen:
+[ -f requirements.txt ] || echo "discord.py==2.4.0" > requirements.txt
+
 pip install -r requirements.txt
 python3 discordbot.py
 ```
