@@ -1,7 +1,10 @@
 # Discord Countdown Bot
 
-Ein einfacher **Discord-Bot** mit Mini-GUI, der täglich die **verbleibenden Tage** bis zu einem Event postet.  
+Ein einfacher **Discord-Bot** mit Mini-GUI, der täglich die **verbleibenden Tage** bis zu einem Event postet.
+
 Am Event-Tag schaltet er in den **Hype-Modus** und postet **10×** zur Feier des Tages (30 s Abstand).
+
+Entwickelt und getestet auf einem Raspberry Pi 4 2GB.
 
 ## Features
 - **Täglicher Countdown** in einen Textkanal
@@ -14,68 +17,83 @@ Am Event-Tag schaltet er in den **Hype-Modus** und postet **10×** zur Feier des
 
 ## Anforderungen
 - Python **3.11+**
-- Tkinter (unter Debian/RPi: `sudo apt install -y python3-tk`)
 - Discord **Bot-Token** & **Channel-ID**
+- **requirements.txt** erstelle ich händisch in folgendem Pfad "/home/user/Discord-Countdown-Bot"
 
+Inhalt von requirements.txt
 ```
-requirements.txt
 discord.py==2.4.0
 ```
 
-## Konfiguration
 
-> **Tipp (RPi/Debian):**
-> ```bash
-> sudo apt update
-> sudo apt install -y python3-tk
-> ```
+# Installationsanleitung
 
-Die Datei **`config.json`** liegt **im selben Ordner** wie Script/Binary und wird von der GUI gelesen/geschrieben:
-```json
-{
-  "token": "YOUR_DISCORD_BOT_TOKEN",
-  "channel_id": "123456789012345678",
-  "event_name": "My Festival",
-  "event_date": "2025-08-14",
-  "post_hour": "9:00",
-  "mention_everyone": false,
-  "image_path": "path/to/image.png",
-  "last_post_date": ""
-}
-```
 
-## Start (Raspberry Pi / Linux)
-```
-1. Repository klonen
+Repository klonen
+```bash
 git clone https://github.com/michig97/Discord-Countdown-Bot.git
-cd Discord-Countdown-Bot
+```
 
-2. Virtuelle Umgebung erstellen
+Wechselt in das Projektverzeichnis, in dem der Bot-Code liegt.
+```bash
+cd ~/Discord-Countdown-Bot
+```
+
+Erstellt eine neue Python-virtuelle Umgebung im Ordner ".venv".
+```bash
 python3 -m venv .venv
-source .venv/bin/activate
-
-3. Abhängigkeiten installieren
-pip install -r requirements.txt
-
-4. Bot starten
-python3 Code
 ```
 
-## Native Binary bauen (Raspberry Pi)
-
-```
+Aktiviert die virtuelle Umgebung
+```bash
 source .venv/bin/activate
+```
+
+Installiert alle in der Datei "requirements.txt" aufgelisteten Python-Pakete
+innerhalb der virtuellen Umgebung.
+```bash
+python -m pip install -r requirements.txt
+```
+
+Startet den Bot über die Python-Datei "Code" im aktuellen Verzeichnis.
+Falls die Datei "Code.py" heißt, sollte hier "python Code.py" stehen.
+```bash
+python Code
+```
+
+# Code in Binary umwandeln
+
+Wechselt in das Projektverzeichnis, in dem der Bot-Code liegt.
+```bash
+cd ~/Discord-Countdown-Bot
+```
+
+Aktiviert die zuvor erstellte virtuelle Umgebung, 
+damit die Installation und der Build in dieser Umgebung erfolgen.
+```bash
+source .venv/bin/activate
+```
+
+PyInstaller wird verwendet, um den Python-Code in eine eigenständige 
+ausführbare Datei (Binary) zu verpacken
+```bash
 pip install pyinstaller
-pyinstaller --onefile --noconsole --name DiscordCountdown Code
-./dist/DiscordCountdown
 ```
 
-## Optionaler Desktop-Shortcut:
-
+Baut aus der Datei "Code" ein einzelnes ausführbares Binary.
+```bash
+pyinstaller --onefile --noconsole --name DiscordCountdown ./Code
 ```
+
+# Desktop-Shortcut erstellen
+
+```bash
+cat > ~/Desktop/discord-countdown-bot.desktop << 'EOF'
 [Desktop Entry]
 Type=Application
 Name=Discord Countdown Bot
-Exec=/full/path/to/dist/DiscordCountdown
+Exec=/home/user/Discord-Countdown-Bot/dist/DiscordCountdown
+Path=/home/user/Discord-Countdown-Bot
 Terminal=false
+EOF
 ```
