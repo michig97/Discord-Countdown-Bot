@@ -14,7 +14,7 @@ Am Event-Tag schaltet er in den **Hype-Modus** und postet **10×** zur Feier des
 
 ## Anforderungen
 - Python **3.11+**
-- Tkinter (unter Debian/RPi: `python3-tk`)
+- Tkinter (unter Debian/RPi: `sudo apt install -y python3-tk`)
 - Discord **Bot-Token** & **Channel-ID**
 
 ```
@@ -46,17 +46,19 @@ Die Datei **`config.json`** liegt **im selben Ordner** wie Script/Binary und wir
 
 ## Start (Raspberry Pi / Linux)
 ```
+1. Repository klonen
 git clone https://github.com/michig97/Discord-Countdown-Bot.git
 cd Discord-Countdown-Bot
 
+2. Virtuelle Umgebung erstellen
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Falls die Datei im Repo fehlt, requirements.txt anlegen:
-[ -f requirements.txt ] || echo "discord.py==2.4.0" > requirements.txt
-
+3. Abhängigkeiten installieren
 pip install -r requirements.txt
-python3 discordbot.py
+
+4. Bot starten
+python3 Code
 ```
 
 ## Native Binary bauen (Raspberry Pi)
@@ -64,7 +66,7 @@ python3 discordbot.py
 ```
 source .venv/bin/activate
 pip install pyinstaller
-pyinstaller --onefile --noconsole --name DiscordCountdown discordbot.py
+pyinstaller --onefile --noconsole --name DiscordCountdown Code
 ./dist/DiscordCountdown
 ```
 
